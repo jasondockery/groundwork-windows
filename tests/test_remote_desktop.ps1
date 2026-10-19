@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../setup-remote-desktop.ps1') -Help
 $script:changes = [System.Collections.Generic.List[object]]::new()
 $script:fixtureCase = 'success'
+$script:ruleCreated = $false
 function Assert-WindowsAdministrator { }
 function Read-TailscaleStatus {
     $state = if ($script:fixtureCase -eq 'offline') { 'NeedsLogin' } else { 'Running' }
@@ -26,20 +27,34 @@ function Get-NetFirewallProfile {
     return [pscustomobject]@{ Enabled = ($script:fixtureCase -ne 'firewall-off'); DefaultInboundAction = 'Block' }
 }
 function Get-NetFirewallRule {
-    param($Name, $PolicyStore, $Enabled, $Direction, $Action, $ErrorAction)
+    param($Name, $PolicyStore, [switch]$TracePolicyStore, $Enabled, $Direction, $Action, $ErrorAction)
     if ($Name -eq 'Groundwork-RDP-Tailscale') { return $null }
-    if ($Name -eq 'RemoteDesktop-*') { return [pscustomobject]@{ Name = 'RemoteDesktop-UserMode-In-TCP' } }
-    if ($script:fixtureCase -eq 'broad-rule') { return [pscustomobject]@{ Name = 'OwnerBroadRule' } }
-    return [pscustomobject]@{ Name = 'UnrelatedSSH' }
+    if ($Name -eq 'RemoteDesktop-*' -and $script:fixtureCase -eq 'managed-rule') { return $null }
+    if ($Name -eq 'RemoteDesktop-*') { return [pscustomobject]@{ Name = 'RemoteDesktop-UserMode-In-TCP'; PolicyStoreSourceType = 'Local' } }
+    if ($PolicyStore -eq 'ActiveStore' -and $script:fixtureCase -eq 'managed-rule') {
+        return [pscustomobject]@{ Name = 'RemoteDesktop-UserMode-In-TCP'; PolicyStoreSourceType = 'GroupPolicy' }
+    }
+    if ($script:ruleCreated) { return [pscustomobject]@{ Name = 'Groundwork-RDP-Tailscale'; PolicyStoreSourceType = 'Local' } }
+    if ($script:fixtureCase -eq 'broad-rule') { return [pscustomobject]@{ Name = 'OwnerBroadRule'; PolicyStoreSourceType = 'Local' } }
+    return [pscustomobject]@{ Name = 'UnrelatedSSH'; PolicyStoreSourceType = 'Local' }
 }
 function Get-NetFirewallPortFilter {
     param([Parameter(ValueFromPipeline)]$Rule)
-    process { return [pscustomobject]@{ Protocol = 'TCP'; LocalPort = $(if ($Rule.Name -eq 'OwnerBroadRule') { 'Any' } else { '22' }) } }
+    process { return [pscustomobject]@{ Protocol = 'TCP'; LocalPort = $(if ($Rule.Name -eq 'OwnerBroadRule') { 'Any' } elseif ($Rule.Name -eq 'UnrelatedSSH') { '22' } else { '3389' }) } }
 }
 function Get-NetFirewallApplicationFilter { param([Parameter(ValueFromPipeline)]$Rule) process { return [pscustomobject]@{ Program = 'Any' } } }
 function Get-NetFirewallServiceFilter { param([Parameter(ValueFromPipeline)]$Rule) process { return [pscustomobject]@{ Service = 'Any' } } }
+function Get-NetFirewallInterfaceFilter {
+    param([Parameter(ValueFromPipeline)]$Rule)
+    process { return [pscustomobject]@{ InterfaceAlias = $(if ($script:fixtureCase -eq 'effective-broad') { 'Any' } else { 'Tailscale' }) } }
+}
+function Get-NetFirewallAddressFilter {
+    param([Parameter(ValueFromPipeline)]$Rule)
+    process { return [pscustomobject]@{ LocalAddress = '100.64.0.2'; RemoteAddress = '100.64.0.0/10' } }
+}
 function New-NetFirewallRule {
-    param($Name, $DisplayName, $Direction, $Action, $Enabled, $Profile, $InterfaceAlias, $LocalAddress, $RemoteAddress, $Protocol, $LocalPort, $EdgeTraversalPolicy)
+    param($PolicyStore, $Name, $DisplayName, $Direction, $Action, $Enabled, $Profile, $InterfaceAlias, $LocalAddress, $RemoteAddress, $Protocol, $LocalPort, $EdgeTraversalPolicy)
+    $script:ruleCreated = $true
     $script:changes.Add([pscustomobject]@{ Operation = 'allow'; Interface = $InterfaceAlias; Local = $LocalAddress; Remote = $RemoteAddress; Protocol = $Protocol; Port = $LocalPort })
 }
 function Remove-NetFirewallRule { param([Parameter(ValueFromPipeline)]$Rule) process { $script:changes.Add([pscustomobject]@{ Operation = 'remove' }) } }
@@ -49,16 +64,24 @@ function Set-Service { param($Name, $StartupType) $script:changes.Add([pscustomo
 function Start-Service { param($Name) $script:changes.Add([pscustomobject]@{ Operation = 'start' }) }
 function Get-Service { param($Name) return [pscustomobject]@{ Status = 'Running' } }
 
-foreach ($case in @('offline', 'policy', 'firewall-off', 'broad-rule')) {
+foreach ($case in @('offline', 'policy', 'firewall-off', 'broad-rule', 'managed-rule')) {
     $script:fixtureCase = $case
     $script:changes.Clear()
+    $script:ruleCreated = $false
     $failed = $false
     try { Enable-GroundworkRemoteDesktop } catch { $failed = $true }
     if (-not $failed) { throw "Unsafe precondition '$case' was accepted." }
     if ($script:changes.Count -ne 0) { throw "Unsafe precondition '$case' mutated host settings." }
 }
+$script:fixtureCase = 'effective-broad'
+$script:changes.Clear()
+$script:ruleCreated = $false
+$failed = $false
+try { Enable-GroundworkRemoteDesktop } catch { $failed = $true }
+if (-not $failed -or @($script:changes | Where-Object { $_.Operation -in @('registry', 'startup', 'start') }).Count) { throw 'Effective broad policy reached RDP enablement.' }
 $script:fixtureCase = 'success'
 $script:changes.Clear()
+$script:ruleCreated = $false
 Enable-GroundworkRemoteDesktop
 $allow = @($script:changes | Where-Object Operation -eq 'allow')
 if ($allow.Count -ne 1 -or $allow[0].Interface -ne 'Tailscale' -or $allow[0].Local -ne '100.64.0.2' -or $allow[0].Remote -ne '100.64.0.0/10' -or $allow[0].Protocol -ne 'TCP' -or $allow[0].Port -ne 3389) { throw 'RDP firewall scope widened.' }

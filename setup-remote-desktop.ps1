@@ -42,6 +42,31 @@ function Read-TailscaleStatus {
     }
 }
 
+function Get-RdpAllowRules {
+    param([int]$Port)
+    foreach ($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -TracePolicyStore -Enabled True -Direction Inbound -Action Allow)) {
+        $ports = $rule | Get-NetFirewallPortFilter
+        if ($ports.Protocol -notin @('TCP', '6', 'UDP', '17', 'Any', '256') -or -not (Test-DesktopPort $ports.LocalPort $Port)) { continue }
+        $application = $rule | Get-NetFirewallApplicationFilter
+        $service = $rule | Get-NetFirewallServiceFilter
+        if (($application.Program -in @('Any', 'System') -or $application.Program -match '(^|[\\/])svchost\.exe$') -and $service.Service -in @('Any', 'TermService')) { $rule }
+    }
+}
+
+function Test-ScopedRdpRule {
+    param($Rule, [string]$Address, [string]$Adapter, [int]$Port)
+    $interfaces = @(($Rule | Get-NetFirewallInterfaceFilter).InterfaceAlias)
+    $addresses = $Rule | Get-NetFirewallAddressFilter
+    $local = @($addresses.LocalAddress)
+    $remote = @($addresses.RemoteAddress)
+    $ports = $Rule | Get-NetFirewallPortFilter
+    return ($Rule.PolicyStoreSourceType -eq 'Local' -and
+            $interfaces.Count -eq 1 -and $interfaces[0] -eq $Adapter -and
+            $local.Count -eq 1 -and $local[0] -in @($Address, "$Address/32", "$Address/255.255.255.255") -and
+            $remote.Count -eq 1 -and $remote[0] -in @('100.64.0.0/10', '100.64.0.0/255.192.0.0') -and
+            $ports.Protocol -in @('TCP', '6') -and @($ports.LocalPort).Count -eq 1 -and $ports.LocalPort -eq "$Port")
+}
+
 function Assert-WindowsAdministrator {
     if ($env:WSL_DISTRO_NAME -or $env:WSL_INTEROP) { throw 'Run in native Administrator PowerShell, outside WSL.' }
     if (-not $IsWindows) { throw 'Run this native host command in Windows PowerShell 7, not inside WSL, macOS, or Linux.' }
@@ -76,23 +101,24 @@ function Enable-GroundworkRemoteDesktop {
     # Do not silently leave a custom broad rule that defeats the interface scope.
     # Keep unrelated application/service rules; fail before mutation for ambiguous
     # RDP-capable rules so their existing owner can reconcile them deliberately.
-    foreach ($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Allow)) {
-        if ($rule.Name -like 'RemoteDesktop-*' -or $rule.Name -eq $ruleName) { continue }
-        $ports = $rule | Get-NetFirewallPortFilter
-        if ($ports.Protocol -notin @('TCP', '6', 'Any', '256') -or -not (Test-DesktopPort $ports.LocalPort $port)) { continue }
-        $application = $rule | Get-NetFirewallApplicationFilter
-        $service = $rule | Get-NetFirewallServiceFilter
-        if (($application.Program -in @('Any', 'System') -or $application.Program -match '(^|[\\/])svchost\.exe$') -and $service.Service -in @('Any', 'TermService')) {
-            throw ("Existing firewall rule '{0}' may expose RDP outside Tailscale. Reconcile it first; no settings were changed." -f $rule.Name)
+    foreach ($rule in @(Get-RdpAllowRules -Port $port)) {
+        if ($rule.PolicyStoreSourceType -ne 'Local') {
+            throw ("Managed firewall rule '{0}' may expose RDP. Reconcile its policy owner first; no settings were changed." -f $rule.Name)
         }
+        if ($rule.Name -like 'RemoteDesktop-*' -or $rule.Name -eq $ruleName) { continue }
+        throw ("Existing firewall rule '{0}' may expose RDP outside Tailscale. Reconcile it first; no settings were changed." -f $rule.Name)
     }
 
     # Build the narrow allow before enabling the server, then retire Microsoft's
     # broad built-in RDP allows. Other service rules and account memberships stay.
-    $existing = Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue
+    $existing = Get-NetFirewallRule -PolicyStore PersistentStore -Name $ruleName -ErrorAction SilentlyContinue
     if ($existing) { $existing | Remove-NetFirewallRule }
-    $null = New-NetFirewallRule -Name $ruleName -DisplayName 'Groundwork RDP over Tailscale' -Direction Inbound -Action Allow -Enabled True -Profile Any -InterfaceAlias $adapter.Name -LocalAddress $address -RemoteAddress '100.64.0.0/10' -Protocol TCP -LocalPort $port -EdgeTraversalPolicy Block
-    Get-NetFirewallRule -Name 'RemoteDesktop-*' -ErrorAction SilentlyContinue | Disable-NetFirewallRule
+    $null = New-NetFirewallRule -PolicyStore PersistentStore -Name $ruleName -DisplayName 'Groundwork RDP over Tailscale' -Direction Inbound -Action Allow -Enabled True -Profile Any -InterfaceAlias $adapter.Name -LocalAddress $address -RemoteAddress '100.64.0.0/10' -Protocol TCP -LocalPort $port -EdgeTraversalPolicy Block
+    Get-NetFirewallRule -PolicyStore PersistentStore -Name 'RemoteDesktop-*' -ErrorAction SilentlyContinue | Disable-NetFirewallRule
+    $effective = @(Get-RdpAllowRules -Port $port)
+    if ($effective.Count -ne 1 -or $effective[0].Name -ne $ruleName -or -not (Test-ScopedRdpRule $effective[0] $address $adapter.Name $port)) {
+        throw 'Effective firewall policy is not restricted to the owned Tailscale rule; RDP was not enabled by this run.'
+    }
     Set-ItemProperty -Path $rdpKey -Name UserAuthentication -Value 1
     Set-ItemProperty -Path $rdpKey -Name SecurityLayer -Value 2
     Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
