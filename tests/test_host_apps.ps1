@@ -14,3 +14,4 @@ foreach ($case in @(@{ Args = @('-Help') }, @{ Args = @() }, @{ Args = @('-Insta
 $output = & $pwsh -NoProfile -File $script -UnknownArgument 2>&1 | Out-String
 if ($LASTEXITCODE -eq 0) { throw 'An invalid argument was accepted.' }
 Write-Output 'Host app parser, help, plan, WhatIf, and invalid-argument contracts passed; no packages were installed.'
+exit 0
