@@ -25,3 +25,15 @@ Review and pull this entry point with `git pull --ff-only`. The engine owns appl
 ## License
 
 [MIT](LICENSE), matching the Groundwork family.
+
+## Common developer setup and macOS containers
+
+The family uses one developer tool set across personal and managed machines, with independent identity and optional-app preferences. See the [shared setup guide](https://github.com/jasondockery/groundwork-core/blob/main/docs/developer-setup.md) for tool and platform ownership.
+
+For a macOS machine, Groundwork recommends Colima plus the Docker CLI. The single [Docker Desktop to Colima guide](https://github.com/jasondockery/groundwork-mac/blob/main/docs/docker-desktop-to-colima.md) covers migration scenarios, data transfer, verification, rollback, and Docker Desktop uninstallation after acceptance. This recommendation applies to macOS; this repository’s Linux, WSL, or Omarchy environment keeps its native container path.
+
+## Native Windows apps
+
+Run `pwsh -File ./install-host-apps.ps1` on the Windows host to review the official Tailscale, Cursor, Claude, and ChatGPT packages. PowerShell 7 and Microsoft App Installer (`winget`) are required. `pwsh -File ./install-host-apps.ps1 -Install -WhatIf` previews the actions; `-Install` requests the latest available package versions, accepting their source/package agreements. Every package has a ten-minute deadline and failed or policy-blocked operations are reported rather than called current. Store availability and organization policy remain authoritative. Open each app to verify its version and finish sign-in.
+
+The native host script is separate from WSL setup. Codex CLI, Claude Code, Grok Build, and OpenCode run inside WSL through the shared engine and need provider authentication there. Tailscale is installed on the host by the script; the WSL package does not start or enroll another daemon automatically. Windows apps update through their official updater, Microsoft Store, or the supported winget command. No Windows app is installed from a WSL shell.

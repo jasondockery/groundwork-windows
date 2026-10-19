@@ -2,7 +2,7 @@
 
 Read the [shared Tailscale guide](https://github.com/jasondockery/groundwork-core/blob/main/docs/tailscale.md) for policy, MagicDNS, MFA, device approval, expiry, and two-way checks. This page owns the Windows/WSL boundary only.
 
-Install the official Tailscale Windows app on the host, sign in interactively to the same personal tailnet as your other devices, and approve the device. Let that app own its Windows service and DNS. An unattended-mode choice changes whether it runs after logout; make that choice deliberately and verify reboot behavior before depending on remote access.
+Use the explicit [`install-host-apps.ps1`](../install-host-apps.ps1) host installer, or install the official Tailscale Windows app on the host, sign in interactively to the same personal tailnet as your other devices, and approve the device. Let that app own its Windows service and DNS. An unattended-mode choice changes whether it runs after logout; make that choice deliberately and verify reboot behavior before depending on remote access.
 
 For incoming terminal access to Windows, enable Windows OpenSSH Server for the intended local account and authorize its SSH key. Apply a narrow host firewall rule for the chosen access path as well as the tailnet's network policy. The Windows app cannot serve Tailscale SSH; an SSH check-mode rule applies to Tailscale SSH servers, not ordinary Windows OpenSSH authentication. Do not expose the port through your router.
 
