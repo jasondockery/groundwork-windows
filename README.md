@@ -14,6 +14,8 @@ T3 Code Nightly and Herdr run in WSL2 through that engine. If you want a native 
 
 ## Keyboard and remote access
 
+For desktop access, finish Tailscale sign-in on the Windows host, then run `pwsh -File ./setup-remote-desktop.ps1 -Enable` in **Administrator PowerShell 7** on that host. Use `-Enable -WhatIf` to preview. It configures supported native RDP with automatic startup, NLA/TLS, existing allowed users, and a firewall rule restricted to the active Tailscale adapter/address. It refuses unsupported editions, managed-policy denial, an offline tailnet, disabled/broad-default firewalls, and ambiguous existing custom RDP allows before changing RDP settings. Windows Home cannot host native RDP. This native command is intentionally separate from WSL; see [desktop access](docs/tailscale.md#desktop-access).
+
 Use Omarchy's terminal chords inside tmux and Herdr: `Ctrl+Space`, Alt+Enter splits, Ctrl+Alt+arrow pane focus, and aligned tab/session actions. If Windows Terminal or another host app intercepts a chord, clear that host binding in its supported settings and verify delivery in the multiplexer. Do not remap the whole Windows desktop or assume Linux can configure host input.
 
 Install Tailscale on the Windows host for normal access to that machine; see [Tailscale setup](docs/tailscale.md). WSL is a separate environment, so host connectivity alone does not publish its SSH server. Choose Both in `groundwork-configure` when you want tmux lessons alongside Herdr.
