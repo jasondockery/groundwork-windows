@@ -3,10 +3,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
+BASH = shutil.which('bash')
 STUB = '''#!/usr/bin/env python3
 import json, os, pathlib, sys
 root = pathlib.Path(os.environ['WRAPPER_FIXTURE'])
@@ -50,7 +52,7 @@ class BootstrapTests(unittest.TestCase):
         self.env.pop('GROUNDWORK_REPO_URL', None)
 
     def run_wrapper(self, *args, status=0):
-        result = subprocess.run(['bash', str(REPO / 'bootstrap.sh'), *args], env=self.env,
+        result = subprocess.run([BASH, str(REPO / 'bootstrap.sh'), *args], env=self.env,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, status, result.stdout + result.stderr)
         return result
