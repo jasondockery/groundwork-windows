@@ -22,7 +22,23 @@ Install Tailscale on the Windows host for normal access to that machine; see [Ta
 
 ## Updates
 
-Review and pull this entry point with `git pull --ff-only`. The engine owns applied Unix configuration and `update-all`; Windows apps keep their supported Windows updater. Do not run two competing Tailscale or agent-server installations without deliberately choosing their ownership.
+Inside WSL2, run `update-all` from any directory for normal Groundwork tool
+updates and maintenance. Run `groundwork-update` to synchronize and apply only
+Unix configuration using saved settings. Configuration applies can install newly
+declared tools; they do not request routine upgrades or cleanup. Existing
+installations receive the new command on their next successful `update-all`.
+Use `groundwork-configure` to change preferences.
+
+The visible `groundwork-mac` engine checkout remains the update owner. This
+entry-point checkout contains setup and Windows-host guidance; daily maintenance
+does not require pulling it or rerunning bootstrap. Review local changes before
+`git pull --ff-only` when you need newer bootstrap or host scripts.
+
+WSL commands do not update Windows apps, change host permissions, or update
+Windows itself. Use Windows Update and each app's supported Windows updater on
+the host. Linux distribution packages inside WSL keep their supported package
+manager. Do not run two competing Tailscale or agent-server installations
+without deliberately choosing their ownership.
 
 ## License
 
