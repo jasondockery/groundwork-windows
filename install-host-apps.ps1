@@ -7,7 +7,8 @@ $packages = @(
     @{ Name = 'Tailscale'; Id = 'Tailscale.Tailscale'; Source = 'winget' },
     @{ Name = 'Cursor'; Id = 'Anysphere.Cursor'; Source = 'winget' },
     @{ Name = 'Claude'; Id = 'Anthropic.Claude'; Source = 'winget' },
-    @{ Name = 'ChatGPT'; Id = '9NT1R1C2HH7J'; Source = 'msstore' }
+    @{ Name = 'ChatGPT'; Id = '9NT1R1C2HH7J'; Source = 'msstore' },
+    @{ Name = 'FreeTube'; Id = 'FreeTube.FreeTube'; Source = 'winget' }
 )
 if ($Help) {
     Write-Output 'Usage: pwsh -File ./install-host-apps.ps1 [-Install [-WhatIf]]'
