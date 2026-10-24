@@ -10,7 +10,8 @@ foreach ($case in @(@{ Args = @('-Help') }, @{ Args = @() }, @{ Args = @('-Insta
     $output = & $pwsh -NoProfile -File $script @arguments 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw $output }
     if ($arguments -notcontains '-Help' -and $output -notmatch 'Tailscale') { throw 'The package plan omitted Tailscale.' }
-    if ($arguments -notcontains '-Help' -and $output -notmatch 'FreeTube') { throw 'The package plan omitted FreeTube.' }
+    if ($arguments.Count -eq 0 -and -not $output.Contains('FreeTube: FreeTube.FreeTube (winget)')) { throw 'The package plan omitted the FreeTube.FreeTube winget id.' }
+    if ($arguments -contains '-WhatIf' -and -not $output.Contains('target "FreeTube"')) { throw 'The WhatIf preview omitted FreeTube.' }
 }
 $output = & $pwsh -NoProfile -File $script -UnknownArgument 2>&1 | Out-String
 if ($LASTEXITCODE -eq 0) { throw 'An invalid argument was accepted.' }
