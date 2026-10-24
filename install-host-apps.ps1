@@ -7,7 +7,8 @@ $packages = @(
     @{ Name = 'Tailscale'; Id = 'Tailscale.Tailscale'; Source = 'winget' },
     @{ Name = 'Cursor'; Id = 'Anysphere.Cursor'; Source = 'winget' },
     @{ Name = 'Claude'; Id = 'Anthropic.Claude'; Source = 'winget' },
-    @{ Name = 'ChatGPT'; Id = '9NT1R1C2HH7J'; Source = 'msstore' }
+    @{ Name = 'ChatGPT'; Id = '9NT1R1C2HH7J'; Source = 'msstore' },
+    @{ Name = 'FreeTube'; Id = 'FreeTube.FreeTube'; Source = 'winget' }
 )
 if ($Help) {
     Write-Output 'Usage: pwsh -File ./install-host-apps.ps1 [-Install [-WhatIf]]'
@@ -39,7 +40,8 @@ foreach ($package in $packages) {
             Write-Warning ("{0}: winget exited {1}. Check package availability, pinning, Store access, and device policy; this is not verified success." -f $package.Name, $process.ExitCode)
             $failed = $true
         } else {
-            Write-Output ("{0}: package command completed. Open the app and verify its version and sign-in." -f $package.Name)
+            $check = if ($package.Name -eq 'FreeTube') { 'its version (FreeTube has no account)' } else { 'its version and sign-in' }
+            Write-Output ("{0}: package command completed. Open the app and verify {1}." -f $package.Name, $check)
         }
     } finally {
         if (-not $process.HasExited) {
