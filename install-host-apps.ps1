@@ -200,7 +200,7 @@ function Open-BraveDefaultAppsSettings {
     [CmdletBinding(SupportsShouldProcess)]
     param($Entries)
     if (-not [Environment]::Is64BitProcess) {
-        throw 'Open 64-bit PowerShell 7 as Administrator. A 32-bit session would write the Brave policy key in the wrong registry view. No Brave policies were written.'
+        throw 'Open 64-bit PowerShell 7, then rerun: pwsh -File ./install-host-apps.ps1 -SetDefaultBrowser. A 32-bit session reads HKLM\Software\RegisteredApplications from the wrong registry view. No Settings page was opened.'
     }
     if (-not $IsWindows) { throw 'Run this script on the Windows host, not inside WSL, macOS, or Linux.' }
     if (-not $Entries) { $Entries = @(Get-BraveRegisteredApplicationEntries) }

@@ -40,12 +40,19 @@ if ($LASTEXITCODE -ne 0) { throw $helpWithPolicy }
 if ($helpWithPolicy -notmatch '-ApplyBrowserPolicy') { throw 'Help combined with -ApplyBrowserPolicy did not print usage.' }
 
 . $script -Help | Out-Null
-$bitnessSentence = 'A 32-bit session would write the Brave policy key in the wrong registry view.'
-if (${function:Open-BraveDefaultAppsSettings}.ToString() -notmatch [regex]::Escape($bitnessSentence)) {
+$settingsBitnessSentence = 'Open 64-bit PowerShell 7, then rerun: pwsh -File ./install-host-apps.ps1 -SetDefaultBrowser. A 32-bit session reads HKLM\Software\RegisteredApplications from the wrong registry view. No Settings page was opened.'
+if (${function:Open-BraveDefaultAppsSettings}.ToString() -notmatch [regex]::Escape($settingsBitnessSentence)) {
     throw 'Open-BraveDefaultAppsSettings does not refuse a 32-bit process.'
 }
-if (${function:Invoke-GroundworkBravePolicy}.ToString() -notmatch [regex]::Escape($bitnessSentence)) {
+$policyBitnessSentence = 'A 32-bit session would write the Brave policy key in the wrong registry view.'
+if (${function:Open-BraveDefaultAppsSettings}.ToString() -match [regex]::Escape($policyBitnessSentence)) {
+    throw 'Open-BraveDefaultAppsSettings uses the policy bitness message.'
+}
+if (${function:Invoke-GroundworkBravePolicy}.ToString() -notmatch [regex]::Escape($policyBitnessSentence)) {
     throw 'Policy apply does not refuse a 32-bit process.'
+}
+if (${function:Invoke-GroundworkBravePolicy}.ToString() -match [regex]::Escape($settingsBitnessSentence)) {
+    throw 'Policy apply uses the Settings bitness message.'
 }
 $elevatedDefinition = ${function:Test-HostAppsElevated}.ToString()
 if ($elevatedDefinition -notmatch 'WindowsBuiltInRole' -or $elevatedDefinition -notmatch 'Administrator') {
