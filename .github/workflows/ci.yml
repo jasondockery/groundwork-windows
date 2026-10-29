@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/brave-host]
+    branches: [main]
   pull_request:
 
 permissions:

@@ -7,11 +7,16 @@ if ($errors.Count -ne 0) { throw ($errors | Out-String) }
 $source = Get-Content -LiteralPath $script -Raw
 if ($source -match 'UserChoice') { throw 'install-host-apps.ps1 references UserChoice.' }
 if ($source -match 'ExtensionInstallForcelist|Chrome\\Extensions') { throw 'install-host-apps.ps1 writes a Chromium extension force-install key.' }
-foreach ($hardcoded in @('BraveRewardsDisabled', 'BraveAIChatEnabled', 'PasswordManagerEnabled', 'BraveP3AEnabled', 'nngceckbapebfimnlniiiahkandclblb')) {
-    if ($source.Contains($hardcoded)) { throw "$hardcoded is copied into install-host-apps.ps1 instead of core/browser/brave.json." }
-}
 $pwsh = (Get-Process -Id $PID).Path
 $spec = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../core/browser/brave.json') -Raw | ConvertFrom-Json
+foreach ($policy in @($spec.policies)) {
+    $name = [string]$policy.name
+    if ($source.Contains($name)) { throw "$name is copied into install-host-apps.ps1 instead of core/browser/brave.json." }
+}
+foreach ($extension in @($spec.extensions)) {
+    $id = [string]$extension.id
+    if ($source.Contains($id)) { throw "$id is copied into install-host-apps.ps1 instead of core/browser/brave.json." }
+}
 $extensionId = [string]$spec.extensions[0].id
 foreach ($case in @(@{ Args = @('-Help') }, @{ Args = @() }, @{ Args = @('-Install', '-WhatIf') })) {
     $arguments = $case.Args
@@ -35,6 +40,13 @@ if ($LASTEXITCODE -ne 0) { throw $helpWithPolicy }
 if ($helpWithPolicy -notmatch '-ApplyBrowserPolicy') { throw 'Help combined with -ApplyBrowserPolicy did not print usage.' }
 
 . $script -Help | Out-Null
+$bitnessSentence = 'A 32-bit session would write the Brave policy key in the wrong registry view.'
+if (${function:Open-BraveDefaultAppsSettings}.ToString() -notmatch [regex]::Escape($bitnessSentence)) {
+    throw 'Open-BraveDefaultAppsSettings does not refuse a 32-bit process.'
+}
+if (${function:Invoke-GroundworkBravePolicy}.ToString() -notmatch [regex]::Escape($bitnessSentence)) {
+    throw 'Policy apply does not refuse a 32-bit process.'
+}
 $elevatedDefinition = ${function:Test-HostAppsElevated}.ToString()
 if ($elevatedDefinition -notmatch 'WindowsBuiltInRole' -or $elevatedDefinition -notmatch 'Administrator') {
     throw 'Elevation check does not require the Administrator role.'
@@ -56,6 +68,19 @@ $uri = ConvertTo-BraveDefaultAppsUri $selected
 if ($uri -ne 'ms-settings:defaultapps?registeredAppUser=Brave%20HTML') { throw "User deep link was '$uri'." }
 $machineUri = ConvertTo-BraveDefaultAppsUri (Select-BraveRegisteredApplication @($edgeEntry, $machineEntry, $betaEntry))
 if ($machineUri -ne 'ms-settings:defaultapps?registeredAppMachine=Brave') { throw "Machine deep link was '$machineUri'." }
+$sidSuffix = '234567ABCDEFGHIJKLMNOPQRST'
+if ($sidSuffix.Length -ne 26 -or $sidSuffix -notmatch '^[A-Z2-7]{26}$') { throw 'The base32 fixture is not 26 characters.' }
+$sidName = "Brave.$sidSuffix"
+$sidEntry = [pscustomobject]@{ Name = $sidName; Scope = 'User'; Data = "Software\Clients\StartMenuInternet\$sidName\Capabilities" }
+$sidUri = ConvertTo-BraveDefaultAppsUri (Select-BraveRegisteredApplication @($edgeEntry, $machineEntry, $betaEntry, $sidEntry))
+if ($sidUri -ne "ms-settings:defaultapps?registeredAppUser=$sidName") { throw "SID deep link was '$sidUri'." }
+$userName = 'Brave.SomeUser'
+$userNamed = [pscustomobject]@{ Name = $userName; Scope = 'User'; Data = "Software\Clients\StartMenuInternet\$userName\Capabilities" }
+$userNamedUri = ConvertTo-BraveDefaultAppsUri (Select-BraveRegisteredApplication @($edgeEntry, $betaEntry, $userNamed))
+if ($userNamedUri -ne "ms-settings:defaultapps?registeredAppUser=$userName") { throw "Username deep link was '$userNamedUri'." }
+if (Test-BraveReleaseCapabilityPath 'Software\BraveSoftware\Brave-Browser-Beta\Capabilities') { throw 'Brave Beta was accepted.' }
+if (Test-BraveReleaseCapabilityPath 'Software\BraveSoftware\Brave-Browser-Dev\Capabilities') { throw 'Brave Dev was accepted.' }
+if (Test-BraveReleaseCapabilityPath 'Software\BraveSoftware\Brave-Browser-Nightly\Capabilities') { throw 'Brave Nightly was accepted.' }
 $rejected = $false
 try { Select-BraveRegisteredApplication @($edgeEntry) } catch {
     $rejected = $true
@@ -67,7 +92,9 @@ if (-not (Test-ShouldOfferBraveImport -Association @('MSEdgeHTM') -ChromeInstall
 if (-not (Test-ShouldOfferBraveImport -Association @('BraveHTML') -ChromeInstalled $true)) { throw 'Installed Chrome did not offer import.' }
 if (Test-ShouldOfferBraveImport -Association @('BraveHTML') -ChromeInstalled $false) { throw 'Brave as the default offered an import with no other browser.' }
 $importNotice = Get-BraveImportNotice -Association @('ChromeHTML') -ChromeInstalled $false
-if ($importNotice -notmatch 'brave://settings/importData' -or $importNotice -notmatch 'Nothing was uninstalled') { throw $importNotice }
+if ($importNotice -notmatch 'bookmarks and history' -or $importNotice -notmatch 'brave://settings/importData' -or $importNotice -notmatch 'Nothing was uninstalled' -or $importNotice -match 'password') { throw $importNotice }
+$chromeOnly = Get-BraveImportNotice -Association @() -ChromeInstalled $true
+if ($chromeOnly -notmatch 'bookmarks and history' -or $chromeOnly -notmatch 'Nothing was uninstalled' -or $chromeOnly -match 'password') { throw $chromeOnly }
 
 if ((ConvertTo-BraveRegistryValue $true).Label -ne 'DWORD 1') { throw 'True did not render as DWORD 1.' }
 if ((ConvertTo-BraveRegistryValue $false).Label -ne 'DWORD 0') { throw 'False did not render as DWORD 0.' }

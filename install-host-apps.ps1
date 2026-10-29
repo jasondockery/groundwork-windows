@@ -144,7 +144,9 @@ function Test-BraveReleaseCapabilityPath {
     param([string]$Data)
     $normalized = ($Data -replace '/', '\').Trim().TrimEnd('\')
     if ($normalized -match '(?i)Brave-Browser-(Beta|Dev|Nightly)') { return $false }
-    return $normalized -match '(?i)^Software\\(Clients\\StartMenuInternet\\Brave|BraveSoftware\\Brave-Browser)\\Capabilities$'
+    $client = '(?i)^Software\\Clients\\StartMenuInternet\\Brave(\.[^\\]+)?\\Capabilities$'
+    $product = '(?i)^Software\\BraveSoftware\\Brave-Browser\\Capabilities$'
+    return ($normalized -match $client) -or ($normalized -match $product)
 }
 
 function Select-BraveRegisteredApplication {
@@ -197,6 +199,9 @@ function Get-BraveRegisteredApplicationEntries {
 function Open-BraveDefaultAppsSettings {
     [CmdletBinding(SupportsShouldProcess)]
     param($Entries)
+    if (-not [Environment]::Is64BitProcess) {
+        throw 'Open 64-bit PowerShell 7 as Administrator. A 32-bit session would write the Brave policy key in the wrong registry view. No Brave policies were written.'
+    }
     if (-not $IsWindows) { throw 'Run this script on the Windows host, not inside WSL, macOS, or Linux.' }
     if (-not $Entries) { $Entries = @(Get-BraveRegisteredApplicationEntries) }
     $selected = Select-BraveRegisteredApplication $Entries
@@ -222,7 +227,7 @@ function Test-ShouldOfferBraveImport {
 function Get-BraveImportNotice {
     param([string[]]$Association, [bool]$ChromeInstalled)
     if (-not (Test-ShouldOfferBraveImport -Association $Association -ChromeInstalled $ChromeInstalled)) { return $null }
-    return 'Brave can import bookmarks, passwords, and history at brave://settings/importData. Nothing was uninstalled.'
+    return 'Brave can import bookmarks and history at brave://settings/importData. Nothing was uninstalled.'
 }
 
 function Test-GoogleChromeInstalled {
@@ -247,22 +252,31 @@ function Get-WindowsUrlAssociation {
     }
     $values = [System.Collections.Generic.List[string]]::new()
     foreach ($kind in @(20, 4)) {
-        $values.Add([GroundworkHostApps.UrlAssociation]::Lookup($Protocol, $kind))
+        try {
+            $found = [GroundworkHostApps.UrlAssociation]::Lookup($Protocol, $kind)
+            if (-not [string]::IsNullOrWhiteSpace($found)) { $values.Add($found) }
+        } catch {
+            # One failed lookup must not drop the others or the Chrome-installed check.
+        }
     }
     return @($values.ToArray())
 }
 
 function Get-BraveImportNoticeFromHost {
     if (-not $IsWindows) { return $null }
-    try {
-        $associations = [System.Collections.Generic.List[string]]::new()
-        foreach ($protocol in @('http', 'https')) {
-            foreach ($value in @(Get-WindowsUrlAssociation $protocol)) { $associations.Add($value) }
+    $associations = [System.Collections.Generic.List[string]]::new()
+    foreach ($protocol in @('http', 'https')) {
+        try {
+            foreach ($value in @(Get-WindowsUrlAssociation $protocol)) {
+                if (-not [string]::IsNullOrWhiteSpace($value)) { $associations.Add($value) }
+            }
+        } catch {
+            # Add-Type or another setup failure skips that protocol only.
         }
-        return Get-BraveImportNotice -Association $associations.ToArray() -ChromeInstalled (Test-GoogleChromeInstalled)
-    } catch {
-        return $null
     }
+    $chromeInstalled = $false
+    try { $chromeInstalled = [bool](Test-GoogleChromeInstalled) } catch { $chromeInstalled = $false }
+    return Get-BraveImportNotice -Association $associations.ToArray() -ChromeInstalled $chromeInstalled
 }
 
 function Get-BraveExtensionNotice {
