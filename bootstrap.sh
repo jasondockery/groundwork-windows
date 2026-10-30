@@ -9,6 +9,26 @@ usage() {
   echo "See docs/git-filter-repo.md."
 }
 
+install_commit_guard() {
+  local script_dir lib
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  lib="${HOME}/.local/lib/groundwork-windows"
+  if [[ ! -f "${script_dir}/core/commit-guard/commit-identity-guard.sh" ]]; then
+    echo "The core submodule is missing commit-guard/commit-identity-guard.sh. Run git submodule update --init core, then rerun this entry point." >&2
+    exit 1
+  fi
+  command -v python3 >/dev/null 2>&1 || {
+    echo "python3 is not available; skipped the commit identity guard." >&2
+    return 0
+  }
+  mkdir -p "$lib"
+  cp "${script_dir}/groundwork-commit-guard.py" "${lib}/groundwork-commit-guard.py"
+  chmod 755 "${lib}/groundwork-commit-guard.py"
+  # A failure here is reported but does not stop setup.
+  python3 -B "${lib}/groundwork-commit-guard.py" apply --guard "${script_dir}/core/commit-guard/commit-identity-guard.sh" ||
+    echo "The commit identity guard was not fully applied. Fix the message above and rerun this entry point." >&2
+}
+
 prepare_only=0
 with_git_filter_repo=0
 for arg in "$@"; do
@@ -70,4 +90,7 @@ if [[ $with_git_filter_repo -eq 1 ]]; then
   bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-git-filter-repo.sh"
 fi
 
+# Commit identity guard (docs/commit-identity.md, groundwork-core v0.9.0), inside WSL2 only.
+# Opt out with groundwork-commit-guard off.
+install_commit_guard
 exec chezmoi --source "$engine_dir" init --apply

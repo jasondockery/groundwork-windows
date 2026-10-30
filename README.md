@@ -73,4 +73,6 @@ The native host script is separate from WSL setup. Codex CLI, Claude Code, Grok 
 
 ## History purges (opt-in)
 
-`bash bootstrap.sh --with-git-filter-repo` installs `git-filter-repo` inside WSL2, for your user, with pipx, with no root. It is off by default and is never installed otherwise. Setup never rewrites history. The procedure is the shared [history purge runbook](https://github.com/jasondockery/groundwork-core/blob/v0.8.1/docs/history-purge.md); the proof check and removal are in [git-filter-repo](docs/git-filter-repo.md).
+`bash bootstrap.sh` inside WSL2 also installs the commit identity guard from the `core` pin: user-level hooks that apply only in repositories whose GitHub remote is yours, never globally. Opt out with `groundwork-commit-guard off`; check with `groundwork-commit-guard doctor`. Nothing runs on the Windows host. See [commit identity guard](docs/commit-identity.md).
+
+`bash bootstrap.sh --with-git-filter-repo` installs `git-filter-repo` inside WSL2, for your user, with pipx, with no root. It is off by default and is never installed otherwise. Setup never rewrites history. The procedure is the shared [history purge runbook](https://github.com/jasondockery/groundwork-core/blob/v0.9.0/docs/history-purge.md); the proof check and removal are in [git-filter-repo](docs/git-filter-repo.md).
