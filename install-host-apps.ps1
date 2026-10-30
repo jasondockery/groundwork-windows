@@ -3,6 +3,8 @@
 param(
     [switch]$Install,
     [switch]$SetDefaultBrowser,
+    [switch]$DeclineBraveDefault,
+    [switch]$RunBraveDefaultStep,
     [switch]$ApplyBrowserPolicy,
     [switch]$Help
 )
@@ -17,6 +19,7 @@ $packages = @(
     @{ Name = 'Brave'; Id = 'Brave.Brave'; Source = 'winget' }
 )
 $script:BravePolicyKey = 'HKLM:\Software\Policies\BraveSoftware\Brave'
+$script:EdgeProgIds = @('MSEdgeHTM', 'AppXq0fevzme2pys62n3e0fbqa7peapykr8v', 'Microsoft Edge')
 $script:BitwardenPasswordManagerWhen = 'Bitwarden is the password manager.'
 $script:UrlAssociationSource = @'
 using System;
@@ -210,7 +213,158 @@ function Open-BraveDefaultAppsSettings {
     Write-Output 'In Windows Settings, set Brave as the default browser and confirm. Windows does not let an installer set this.'
     if ($PSCmdlet.ShouldProcess($uri, 'Open Windows Settings on the Brave default-apps page')) {
         Start-Process -FilePath $uri
+        $script:BraveSettingsOpened = $true
     }
+}
+
+function Get-BraveDefaultStatePath {
+    $root = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:HOME) { Join-Path $env:HOME '.local/state' } else { [System.IO.Path]::GetTempPath() }
+    return (Join-Path (Join-Path $root 'Groundwork') 'brave-default.json')
+}
+
+function Read-BraveDefaultState {
+    # Returns $null when no step has run. An unreadable file is reported as state 'unreadable'
+    # so the caller does nothing: a damaged record must not trigger a second Settings page.
+    param([string]$Path = (Get-BraveDefaultStatePath))
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    try {
+        $state = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        if ($state.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace([string]$state.state)) { throw 'bad shape' }
+        return $state
+    } catch {
+        return [pscustomobject]@{ schemaVersion = 1; state = 'unreadable' }
+    }
+}
+
+function Write-BraveDefaultState {
+    # state is 'opened' (step ran; outcome says whether Brave became the default), 'declined', or 'manual'.
+    param([string]$Path = (Get-BraveDefaultStatePath), [string]$State, [string]$Outcome = '')
+    $directory = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $directory)) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+    $record = [ordered]@{ schemaVersion = 1; state = $State; outcome = $Outcome; recordedAt = [DateTime]::UtcNow.ToString('o') }
+    $temporary = "$Path.tmp"
+    ($record | ConvertTo-Json) | Set-Content -LiteralPath $temporary -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $Path -Force
+}
+
+function Get-DefaultBrowserKind {
+    # Classifies the http and https handlers. Anything that is not wholly Brave, wholly Edge, or unset is 'other'.
+    param([string[]]$ProgIds)
+    $ids = @($ProgIds | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($ids.Count -eq 0) { return 'none' }
+    if (@($ids | Where-Object { $_ -notmatch '^BraveHTML' }).Count -eq 0) { return 'brave' }
+    if (@($ids | Where-Object { $_ -notin $script:EdgeProgIds }).Count -eq 0) { return 'edge' }
+    return 'other'
+}
+
+function Get-NonInteractiveReason {
+    # Returns $null for an interactive desktop session, else a short reason. RDP is a desktop and counts as interactive.
+    param(
+        [bool]$UserInteractive = [Environment]::UserInteractive,
+        [bool]$InputRedirected = [Console]::IsInputRedirected,
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected,
+        [bool]$Remoting = ($null -ne $PSSenderInfo),
+        [bool]$Ssh = [bool]($env:SSH_CONNECTION -or $env:SSH_CLIENT -or $env:SSH_TTY),
+        [bool]$Wsl = [bool]($env:WSL_DISTRO_NAME -or $env:WSL_INTEROP)
+    )
+    if ($Wsl) { return 'this is WSL, not the Windows desktop' }
+    if ($Remoting) { return 'this is a PowerShell remoting session' }
+    if ($Ssh) { return 'this is an SSH session' }
+    if (-not $UserInteractive) { return 'this session is not interactive' }
+    if ($InputRedirected -or $OutputRedirected) { return 'input or output is redirected' }
+    return $null
+}
+
+function Get-BraveDefaultDecision {
+    # Pure decision for the one-time automatic step. Order matters: a record or decline always wins.
+    param($State, [string]$DefaultKind, [bool]$CheckPassed, [string]$NonInteractiveReason)
+    if ($State) {
+        if ($State.state -eq 'declined') { return 'skip-declined' }
+        return 'skip-done'
+    }
+    if (-not $CheckPassed) { return 'skip-check' }
+    if ($DefaultKind -eq 'brave') { return 'already-brave' }
+    if ($DefaultKind -eq 'other') { return 'offer' }
+    if ($NonInteractiveReason) { return 'defer' }
+    return 'open'
+}
+
+function Get-BraveExecutablePath {
+    $keys = @(
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\brave.exe',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\brave.exe'
+    )
+    foreach ($key in $keys) {
+        if (-not (Test-Path -LiteralPath $key)) { continue }
+        $value = (Get-Item -LiteralPath $key).GetValue('')
+        if ($value -and (Test-Path -LiteralPath $value -PathType Leaf)) { return [string]$value }
+    }
+    return $null
+}
+
+function Get-BraveProductVersion {
+    # Reads the exe's file version resource. It never starts Brave, because on Windows the exe
+    # ignores the version flag and opens the browser on the person's profile.
+    param([string]$ExePath)
+    return [string](Get-Item -LiteralPath $ExePath).VersionInfo.ProductVersion
+}
+
+function Test-BraveInstallCheck {
+    # The check for the automatic default step: winget reported success (the caller only gets here then),
+    # the release-channel registration is present, and the exe carries a numeric product version.
+    param($Entries, [string]$ExePath, [scriptblock]$VersionReader = { param($Path) Get-BraveProductVersion -ExePath $Path })
+    try { $null = Select-BraveRegisteredApplication $Entries } catch { return $false }
+    if ([string]::IsNullOrWhiteSpace($ExePath)) { return $false }
+    try { $text = [string](& $VersionReader $ExePath) } catch { return $false }
+    return ($text.Trim() -match '^\d+\.\d+\.\d+(\.\d+)?$')
+}
+
+function Get-BraveDefaultKindFromHost {
+    $ids = [System.Collections.Generic.List[string]]::new()
+    foreach ($protocol in @('http', 'https')) {
+        try { foreach ($value in @(Get-WindowsUrlAssociation $protocol @(20))) { $ids.Add($value) } } catch { }
+    }
+    return Get-DefaultBrowserKind $ids.ToArray()
+}
+
+function Invoke-GroundworkBraveDefaultStep {
+    # Runs once, after winget reported Brave installed. Windows will not let a program set the default,
+    # so "set" means opening Brave's page in Settings. It never writes the registry or works around the default-app protection.
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$StatePath = (Get-BraveDefaultStatePath))
+    $state = Read-BraveDefaultState -Path $StatePath
+    if ($state) {
+        if ($state.state -eq 'unreadable') { Write-Output "Brave default: $StatePath is unreadable, so nothing was changed. Delete that file to let the step run again, or run -DeclineBraveDefault to replace it with a no." }
+        if ($state.state -eq 'declined') { Write-Output 'Brave default: you declined earlier, so nothing was changed. To switch yourself: pwsh -File ./install-host-apps.ps1 -SetDefaultBrowser' }
+        return
+    }
+    $entries = @(Get-BraveRegisteredApplicationEntries)
+    $check = Test-BraveInstallCheck -Entries $entries -ExePath (Get-BraveExecutablePath)
+    $kind = Get-BraveDefaultKindFromHost
+    $reason = Get-NonInteractiveReason
+    $decision = Get-BraveDefaultDecision -State $null -DefaultKind $kind -CheckPassed $check -NonInteractiveReason $reason
+    switch ($decision) {
+        'skip-check' { Write-Output 'Brave default: Brave is not registered yet or has no readable version. Open Brave once, then rerun: pwsh -File ./install-host-apps.ps1 -RunBraveDefaultStep'; return }
+        'already-brave' {
+            Write-Output 'Brave is already the default browser.'
+            if ($PSCmdlet.ShouldProcess($StatePath, 'Record the Brave default step')) { Write-BraveDefaultState -Path $StatePath -State 'opened' -Outcome 'already-brave' }
+            return
+        }
+        'offer' { Write-Output 'Brave default: your default browser is not Edge, so it was left alone. To switch: pwsh -File ./install-host-apps.ps1 -SetDefaultBrowser'; return }
+        'defer' { Write-Output "Brave default: deferred because $reason. Rerun in a desktop session: pwsh -File ./install-host-apps.ps1 -RunBraveDefaultStep"; return }
+    }
+    Write-Output 'Opening Windows Settings once so you can confirm Brave as the default browser. To skip this for good: pwsh -File ./install-host-apps.ps1 -DeclineBraveDefault'
+    $script:BraveSettingsOpened = $false
+    Open-BraveDefaultAppsSettings -Entries $entries
+    if (-not $script:BraveSettingsOpened) { return }
+    $outcome = 'not-confirmed'
+    for ($waited = 0; $waited -lt 60; $waited += 3) {
+        Start-Sleep -Seconds 3
+        if ((Get-BraveDefaultKindFromHost) -eq 'brave') { $outcome = 'brave'; break }
+    }
+    Write-BraveDefaultState -Path $StatePath -State 'opened' -Outcome $outcome
+    if ($outcome -eq 'brave') { Write-Output 'Brave is now the default browser. To switch back, pick another browser in Settings > Apps > Default apps.' }
+    else { Write-Output 'Brave was not confirmed as the default. This step will not run again; to retry: pwsh -File ./install-host-apps.ps1 -SetDefaultBrowser' }
 }
 
 function Test-ShouldOfferBraveImport {
@@ -246,12 +400,12 @@ function Test-GoogleChromeInstalled {
 }
 
 function Get-WindowsUrlAssociation {
-    param([string]$Protocol)
+    param([string]$Protocol, [int[]]$Kinds = @(20, 4))
     if (-not ('GroundworkHostApps.UrlAssociation' -as [type])) {
         Add-Type -TypeDefinition $script:UrlAssociationSource
     }
     $values = [System.Collections.Generic.List[string]]::new()
-    foreach ($kind in @(20, 4)) {
+    foreach ($kind in $Kinds) {
         try {
             $found = [GroundworkHostApps.UrlAssociation]::Lookup($Protocol, $kind)
             if (-not [string]::IsNullOrWhiteSpace($found)) { $values.Add($found) }
@@ -317,20 +471,29 @@ function Write-BraveHostOffers {
 }
 
 if ($Help) {
-    Write-Output 'Usage: pwsh -File ./install-host-apps.ps1 [-Install [-WhatIf]] [-SetDefaultBrowser [-WhatIf]] [-ApplyBrowserPolicy [-WhatIf]]'
+    Write-Output 'Usage: pwsh -File ./install-host-apps.ps1 [-Install [-WhatIf]] [-SetDefaultBrowser [-WhatIf]] [-DeclineBraveDefault] [-RunBraveDefaultStep] [-ApplyBrowserPolicy [-WhatIf]]'
     Write-Output 'Default: show the package plan. -Install requests the newest available official packages and accepts their source/package agreements.'
-    Write-Output 'The Brave package id is Brave.Brave from winget. -SetDefaultBrowser opens Windows Settings so you can confirm Brave as the default. Windows does not let a program set that default.'
+    Write-Output 'The Brave package id is Brave.Brave from winget. -Install opens Windows Settings on Brave once, after Brave installs and its version is readable, so you can confirm it as the default; it never overrides a later choice, and only offers when the default is not Edge. In a remote or non-interactive session it defers. -SetDefaultBrowser is the manual path. -DeclineBraveDefault records a no and cannot be combined with -SetDefaultBrowser. -RunBraveDefaultStep runs only that one-time step, for a retry. Windows does not let a program set that default.'
     Write-Output '-ApplyBrowserPolicy writes the shared policies from core/browser/brave.json. It needs 64-bit Administrator PowerShell and leaves other values under that key alone.'
     Write-Output 'Run on the Windows host with PowerShell 7 and App Installer (winget). Sign-in and device approval remain local.'
     return
 }
-if (-not $Install -and -not $SetDefaultBrowser -and -not $ApplyBrowserPolicy) {
+if (-not $Install -and -not $SetDefaultBrowser -and -not $ApplyBrowserPolicy -and -not $DeclineBraveDefault -and -not $RunBraveDefaultStep) {
     $packages | ForEach-Object { Write-Output ("{0}: {1} ({2})" -f $_.Name, $_.Id, $_.Source) }
     Write-Output 'Plan only. Use -Install after reviewing the packages; -Install -WhatIf previews without running winget.'
     Write-BraveHostOffers
     return
 }
+if ($DeclineBraveDefault -and $SetDefaultBrowser) {
+    throw '-DeclineBraveDefault and -SetDefaultBrowser contradict each other. Pass one. Nothing was changed.'
+}
 $failed = $false
+if ($DeclineBraveDefault) {
+    if ($PSCmdlet.ShouldProcess((Get-BraveDefaultStatePath), 'Record that Brave should not be made the default')) {
+        Write-BraveDefaultState -State 'declined'
+        Write-Output 'Recorded. Brave will not be offered as the default again. -SetDefaultBrowser still works by hand.'
+    }
+}
 if ($Install) {
     if (-not $IsWindows -and -not $WhatIfPreference) {
         throw 'Run this script on the Windows host, not inside WSL, macOS, or Linux.'
@@ -359,7 +522,9 @@ if ($Install) {
                 }
                 Write-Output ("{0}: package command completed. Open the app and verify {1}." -f $package.Name, $check)
                 if ($package.Name -eq 'Brave' -and -not $SetDefaultBrowser) {
-                    Write-Output 'To confirm Brave as the default browser, run: pwsh -File ./install-host-apps.ps1 -SetDefaultBrowser'
+                    try { Invoke-GroundworkBraveDefaultStep } catch {
+                        Write-Warning ("Brave default step stopped: {0} To retry by hand: pwsh -File ./install-host-apps.ps1 -SetDefaultBrowser" -f $_.Exception.Message)
+                    }
                 }
             }
         } finally {
@@ -372,6 +537,14 @@ if ($Install) {
     }
     Write-BraveHostOffers
 }
-if ($SetDefaultBrowser) { Open-BraveDefaultAppsSettings }
+if ($RunBraveDefaultStep -and -not $Install) {
+    if (-not $IsWindows -and -not $WhatIfPreference) { throw 'Run this script on the Windows host, not inside WSL, macOS, or Linux.' }
+    if ($WhatIfPreference) { Write-Output 'What if: would run the one-time Brave default step.' } else { Invoke-GroundworkBraveDefaultStep }
+}
+if ($SetDefaultBrowser) {
+    $script:BraveSettingsOpened = $false
+    Open-BraveDefaultAppsSettings
+    if ($script:BraveSettingsOpened) { Write-BraveDefaultState -State 'manual' -Outcome 'settings-opened' }
+}
 if ($ApplyBrowserPolicy) { Invoke-GroundworkBravePolicy }
 if ($failed) { throw 'One or more requested native apps could not be verified. Successful installations remain installed; repair the reported package and rerun.' }

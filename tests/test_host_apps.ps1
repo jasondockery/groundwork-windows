@@ -96,6 +96,73 @@ try { Select-BraveRegisteredApplication @($edgeEntry) } catch {
 }
 if (-not $rejected) { throw 'An unrelated registration was treated as Brave.' }
 
+if ($source -match 'SetUserFTA|UserChoice|Hash\s*=|ProgHash') { throw 'The script touches the default-browser hash.' }
+if (${function:Invoke-GroundworkBraveDefaultStep}.ToString() -match 'Set-ItemProperty|New-ItemProperty') { throw 'The default step writes the registry.' }
+if ((Get-DefaultBrowserKind @()) -ne 'none') { throw 'No handler was not classified as none.' }
+if ((Get-DefaultBrowserKind @('MSEdgeHTM', 'MSEdgeHTM')) -ne 'edge') { throw 'Edge was not classified.' }
+if ((Get-DefaultBrowserKind @('BraveHTML', 'BraveHTML.ABC')) -ne 'brave') { throw 'Brave was not classified.' }
+if ((Get-DefaultBrowserKind @('BraveHTML', 'MSEdgeHTM')) -ne 'other') { throw 'A mixed default was not classified as other.' }
+if ((Get-DefaultBrowserKind @('ChromeHTML')) -ne 'other') { throw 'Chrome was not classified as other.' }
+if (Get-NonInteractiveReason -UserInteractive $true -InputRedirected $false -OutputRedirected $false -Remoting $false -Ssh $false -Wsl $false) { throw 'A desktop session was called non-interactive.' }
+foreach ($flags in @(@{ Ssh = $true }, @{ Remoting = $true }, @{ Wsl = $true }, @{ UserInteractive = $false }, @{ InputRedirected = $true }, @{ OutputRedirected = $true })) {
+    $base = @{ UserInteractive = $true; InputRedirected = $false; OutputRedirected = $false; Remoting = $false; Ssh = $false; Wsl = $false }
+    foreach ($key in $flags.Keys) { $base[$key] = $flags[$key] }
+    if (-not (Get-NonInteractiveReason @base)) { throw "Session was not deferred: $($flags.Keys -join ',')" }
+}
+$done = [pscustomobject]@{ state = 'opened' }
+$declined = [pscustomobject]@{ state = 'declined' }
+$decisions = @(
+    @{ State = $null; Kind = 'edge'; Check = $true; Reason = $null; Want = 'open' },
+    @{ State = $null; Kind = 'none'; Check = $true; Reason = $null; Want = 'open' },
+    @{ State = $null; Kind = 'edge'; Check = $true; Reason = 'SSH'; Want = 'defer' },
+    @{ State = $null; Kind = 'other'; Check = $true; Reason = $null; Want = 'offer' },
+    @{ State = $null; Kind = 'other'; Check = $true; Reason = 'SSH'; Want = 'offer' },
+    @{ State = $null; Kind = 'brave'; Check = $true; Reason = $null; Want = 'already-brave' },
+    @{ State = $null; Kind = 'edge'; Check = $false; Reason = $null; Want = 'skip-check' },
+    @{ State = $done; Kind = 'edge'; Check = $true; Reason = $null; Want = 'skip-done' },
+    @{ State = $declined; Kind = 'edge'; Check = $true; Reason = $null; Want = 'skip-declined' },
+    @{ State = [pscustomobject]@{ state = 'unreadable' }; Kind = 'edge'; Check = $true; Reason = $null; Want = 'skip-done' }
+)
+foreach ($row in $decisions) {
+    $got = Get-BraveDefaultDecision -State $row.State -DefaultKind $row.Kind -CheckPassed $row.Check -NonInteractiveReason $row.Reason
+    if ($got -ne $row.Want) { throw "Decision for $($row.Kind)/$($row.Check)/$($row.Reason) was '$got', wanted '$($row.Want)'." }
+}
+$okReader = { param($Path) '130.1.71.123' }
+$badReader = { param($Path) '' }
+$throwReader = { param($Path) throw 'cannot run' }
+if (-not (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionReader $okReader)) { throw 'A good Brave install failed the check.' }
+if (Test-BraveInstallCheck -Entries @($edgeEntry) -ExePath 'brave.exe' -VersionReader $okReader) { throw 'Missing registration passed the check.' }
+if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath '' -VersionReader $okReader) { throw 'A missing exe passed the check.' }
+if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionReader $badReader) { throw 'A blank product version passed the check.' }
+if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionReader $throwReader) { throw 'A failing exe passed the check.' }
+$stateDir = Join-Path ([System.IO.Path]::GetTempPath()) ("groundwork-brave-state-" + [guid]::NewGuid().ToString('n'))
+try {
+    $statePath = Join-Path $stateDir 'Groundwork/brave-default.json'
+    if ($null -ne (Read-BraveDefaultState -Path $statePath)) { throw 'A missing state file was read as a record.' }
+    Write-BraveDefaultState -Path $statePath -State 'opened' -Outcome 'not-confirmed'
+    $read = Read-BraveDefaultState -Path $statePath
+    if ($read.state -ne 'opened' -or $read.outcome -ne 'not-confirmed') { throw 'State did not round-trip.' }
+    Write-BraveDefaultState -Path $statePath -State 'declined'
+    if ((Read-BraveDefaultState -Path $statePath).state -ne 'declined') { throw 'A decline was not saved.' }
+    Set-Content -LiteralPath $statePath -Value '{ not json'
+    if ((Read-BraveDefaultState -Path $statePath).state -ne 'unreadable') { throw 'A corrupt state file was not fail-closed.' }
+    $corruptOut = Invoke-GroundworkBraveDefaultStep -StatePath $statePath | Out-String
+    if ($corruptOut -notmatch 'is unreadable' -or $corruptOut -notmatch [regex]::Escape($statePath) -or $corruptOut -notmatch 'Delete that file' -or $corruptOut -match 'Opening Windows Settings') { throw "A corrupt record was not reported or acted on.`n$corruptOut" }
+    Write-BraveDefaultState -Path $statePath -State 'declined'
+    $declinedOut = Invoke-GroundworkBraveDefaultStep -StatePath $statePath | Out-String
+    if ($declinedOut -notmatch 'declined earlier' -or $declinedOut -match 'Opening Windows Settings') { throw "A saved decline was not respected.`n$declinedOut" }
+} finally {
+    if (Test-Path -LiteralPath $stateDir) { Remove-Item -LiteralPath $stateDir -Recurse -Force }
+}
+if (${function:Get-BraveProductVersion}.ToString() -match 'Start-Process|Process\]::Start|--version') { throw 'The version check launches Brave.' }
+$bothOut = & $pwsh -NoProfile -File $script -DeclineBraveDefault -SetDefaultBrowser -WhatIf *>&1 | Out-String
+if ($LASTEXITCODE -eq 0 -or $bothOut -notmatch 'contradict' -or $bothOut -match 'Recorded\.') { throw "Contradicting flags were accepted.`n$bothOut" }
+$stepOut = & $pwsh -NoProfile -File $script -RunBraveDefaultStep -WhatIf *>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -and $IsWindows) { throw $stepOut }
+$declineOut = & $pwsh -NoProfile -File $script -DeclineBraveDefault -WhatIf *>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { throw $declineOut }
+if ($declineOut -match 'Recorded\.') { throw 'WhatIf recorded a decline.' }
+
 if (-not (Test-ShouldOfferBraveImport -Association @('MSEdgeHTM') -ChromeInstalled $false)) { throw 'Edge as the default did not offer import.' }
 if (-not (Test-ShouldOfferBraveImport -Association @('BraveHTML') -ChromeInstalled $true)) { throw 'Installed Chrome did not offer import.' }
 if (Test-ShouldOfferBraveImport -Association @('BraveHTML') -ChromeInstalled $false) { throw 'Brave as the default offered an import with no other browser.' }
