@@ -22,7 +22,7 @@ if has_proof; then
 fi
 
 if ! command -v pipx >/dev/null 2>&1; then
-  echo "pipx is not installed, so git-filter-repo was not installed. Install pipx first (your distribution's pipx package needs a one-time sudo by the machine owner), or use the root-free route 'mise use -g pipx:git-filter-repo' if you have mise with uv. Then rerun with --with-git-filter-repo." >&2
+  echo "pipx is not installed, so git-filter-repo was not installed. Install pipx first (your distribution's pipx package needs root, run once by the machine owner), or use the root-free route 'mise use -g pipx:git-filter-repo' if you have mise with uv. Then rerun with --with-git-filter-repo." >&2
   exit 0
 fi
 if ! command -v timeout >/dev/null 2>&1; then
