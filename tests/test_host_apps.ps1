@@ -127,14 +127,14 @@ foreach ($row in $decisions) {
     $got = Get-BraveDefaultDecision -State $row.State -DefaultKind $row.Kind -CheckPassed $row.Check -NonInteractiveReason $row.Reason
     if ($got -ne $row.Want) { throw "Decision for $($row.Kind)/$($row.Check)/$($row.Reason) was '$got', wanted '$($row.Want)'." }
 }
-$okRunner = { param($Path) 'Brave Browser 130.1.71.123' }
-$badRunner = { param($Path) 'not a version' }
-$throwRunner = { param($Path) throw 'cannot run' }
-if (-not (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionRunner $okRunner)) { throw 'A good Brave install failed the check.' }
-if (Test-BraveInstallCheck -Entries @($edgeEntry) -ExePath 'brave.exe' -VersionRunner $okRunner) { throw 'Missing registration passed the check.' }
-if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath '' -VersionRunner $okRunner) { throw 'A missing exe passed the check.' }
-if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionRunner $badRunner) { throw 'A bad --version answer passed the check.' }
-if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionRunner $throwRunner) { throw 'A failing exe passed the check.' }
+$okReader = { param($Path) '130.1.71.123' }
+$badReader = { param($Path) '' }
+$throwReader = { param($Path) throw 'cannot run' }
+if (-not (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionReader $okReader)) { throw 'A good Brave install failed the check.' }
+if (Test-BraveInstallCheck -Entries @($edgeEntry) -ExePath 'brave.exe' -VersionReader $okReader) { throw 'Missing registration passed the check.' }
+if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath '' -VersionReader $okReader) { throw 'A missing exe passed the check.' }
+if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionReader $badReader) { throw 'A blank product version passed the check.' }
+if (Test-BraveInstallCheck -Entries @($userEntry) -ExePath 'brave.exe' -VersionReader $throwReader) { throw 'A failing exe passed the check.' }
 $stateDir = Join-Path ([System.IO.Path]::GetTempPath()) ("groundwork-brave-state-" + [guid]::NewGuid().ToString('n'))
 try {
     $statePath = Join-Path $stateDir 'Groundwork/brave-default.json'
@@ -146,14 +146,19 @@ try {
     if ((Read-BraveDefaultState -Path $statePath).state -ne 'declined') { throw 'A decline was not saved.' }
     Set-Content -LiteralPath $statePath -Value '{ not json'
     if ((Read-BraveDefaultState -Path $statePath).state -ne 'unreadable') { throw 'A corrupt state file was not fail-closed.' }
-    $quiet = Invoke-GroundworkBraveDefaultStep -StatePath $statePath | Out-String
-    if ($quiet.Trim()) { throw "An unreadable record produced output or a step.`n$quiet" }
+    $corruptOut = Invoke-GroundworkBraveDefaultStep -StatePath $statePath | Out-String
+    if ($corruptOut -notmatch 'is unreadable' -or $corruptOut -notmatch [regex]::Escape($statePath) -or $corruptOut -notmatch 'Delete that file' -or $corruptOut -match 'Opening Windows Settings') { throw "A corrupt record was not reported or acted on.`n$corruptOut" }
     Write-BraveDefaultState -Path $statePath -State 'declined'
     $declinedOut = Invoke-GroundworkBraveDefaultStep -StatePath $statePath | Out-String
     if ($declinedOut -notmatch 'declined earlier' -or $declinedOut -match 'Opening Windows Settings') { throw "A saved decline was not respected.`n$declinedOut" }
 } finally {
     if (Test-Path -LiteralPath $stateDir) { Remove-Item -LiteralPath $stateDir -Recurse -Force }
 }
+if (${function:Get-BraveProductVersion}.ToString() -match 'Start-Process|Process\]::Start|--version') { throw 'The version check launches Brave.' }
+$bothOut = & $pwsh -NoProfile -File $script -DeclineBraveDefault -SetDefaultBrowser -WhatIf *>&1 | Out-String
+if ($LASTEXITCODE -eq 0 -or $bothOut -notmatch 'contradict' -or $bothOut -match 'Recorded\.') { throw "Contradicting flags were accepted.`n$bothOut" }
+$stepOut = & $pwsh -NoProfile -File $script -RunBraveDefaultStep -WhatIf *>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -and $IsWindows) { throw $stepOut }
 $declineOut = & $pwsh -NoProfile -File $script -DeclineBraveDefault -WhatIf *>&1 | Out-String
 if ($LASTEXITCODE -ne 0) { throw $declineOut }
 if ($declineOut -match 'Recorded\.') { throw 'WhatIf recorded a decline.' }
