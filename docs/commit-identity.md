@@ -1,6 +1,6 @@
 # Commit identity guard
 
-The contract is groundwork-core `docs/commit-identity.md` (v0.9.0): no `Co-authored-by` trailer, and no author or committer that matches your local denylist.
+The contract is groundwork-core `docs/commit-identity.md`, at the version the engine pins (v0.9.0 or later; this repository's own `core` pin is not the one that applies): no `Co-authored-by` trailer, and no author or committer that matches your local denylist.
 
 ## Ownership
 
