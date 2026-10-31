@@ -73,4 +73,6 @@ The native host script is separate from WSL setup. Codex CLI, Claude Code, Grok 
 
 ## History purges (opt-in)
 
+The commit identity guard is installed by the shared engine's apply, not by this repository. See [commit identity guard](docs/commit-identity.md).
+
 `bash bootstrap.sh --with-git-filter-repo` installs `git-filter-repo` inside WSL2, for your user, with pipx, with no root. It is off by default and is never installed otherwise. Setup never rewrites history. The procedure is the shared [history purge runbook](https://github.com/jasondockery/groundwork-core/blob/v0.8.1/docs/history-purge.md); the proof check and removal are in [git-filter-repo](docs/git-filter-repo.md).

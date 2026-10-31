@@ -9,3 +9,5 @@ Use [groundwork-core](https://github.com/jasondockery/groundwork-core) for share
 Omarchy's keybindings and conventions are the target where they fit. T3 Code Nightly and Herdr must stay available inside WSL2, with providers authenticated there. Native Windows app installation and permissions are separate, explicit operations. Do not restore historical Groundwork shortcuts as the target.
 
 Parse arguments before side effects. Help and invalid input must not mutate anything. Preserve Windows and WSL configuration, SSH credentials, Git identities, and old checkouts during migration. Test wrappers with isolated fixtures; never claim native Windows, WSL, desktop, or remote acceptance from a Linux-only fixture.
+
+The commit identity guard belongs to the `groundwork-mac` engine (`run_after_24-commit-identity-guard.sh.tmpl`). Do not add an installer here; two installers fight over the dispatcher and the guard symlink. Documentation lives in `docs/commit-identity.md`.
