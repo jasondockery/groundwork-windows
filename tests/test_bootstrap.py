@@ -46,10 +46,10 @@ class BootstrapTests(unittest.TestCase):
         stub = self.bin / 'stub'; stub.write_text(STUB); stub.chmod(0o755)
         for name in ('uname', 'git', 'chezmoi'):
             (self.bin / name).symlink_to(stub)
-        self.env = dict(os.environ, WRAPPER_FIXTURE=str(self.root),
-                        PATH=f'{self.bin}:/usr/bin:/bin', HOME=str(self.root),
-                        GROUNDWORK_ENGINE_DIR=str(self.root / 'engine'))
-        self.env.pop('GROUNDWORK_REPO_URL', None)
+        # Built from scratch so XDG_CONFIG_HOME, CLAUDE_CONFIG_DIR, GIT_CONFIG_* and the like
+        # never reach the real config.
+        self.env = {'WRAPPER_FIXTURE': str(self.root), 'PATH': f'{self.bin}:/usr/bin:/bin',
+                    'HOME': str(self.root), 'GROUNDWORK_ENGINE_DIR': str(self.root / 'engine')}
 
     def run_wrapper(self, *args, status=0):
         result = subprocess.run([BASH, str(REPO / 'bootstrap.sh'), *args], env=self.env,
@@ -123,6 +123,19 @@ class BootstrapTests(unittest.TestCase):
         self.env['FIXTURE_ORIGIN'] = 'git@github.com:someone/unrelated.git'
         self.run_wrapper(status=1)
         self.assertFalse((self.root / 'applied').exists())
+
+    @unittest.skipIf(Path('/usr/share/omarchy').exists(), 'positive wrapper boundary requires a non-Omarchy host; covered in CI')
+    def test_sentinel_config_dirs_stay_empty(self):
+        xdg = self.root / 'sentinel-xdg'
+        claude = self.root / 'sentinel-claude'
+        xdg.mkdir(); claude.mkdir()
+        self.env.update(XDG_CONFIG_HOME=str(xdg), CLAUDE_CONFIG_DIR=str(claude),
+                        GROUNDWORK_COMMIT_DENYLIST=str(self.root / 'sentinel-denylist'))
+        self.run_wrapper()
+        self.assertEqual(list(xdg.iterdir()), [])
+        self.assertEqual(list(claude.iterdir()), [])
+        self.assertFalse((self.root / 'sentinel-denylist').exists())
+        self.assertFalse((self.root / '.config').exists())
 
 
 if __name__ == '__main__':

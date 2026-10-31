@@ -1,29 +1,15 @@
 # Commit identity guard
 
-The contract is groundwork-core `docs/commit-identity.md` (v0.9.0): no `Co-authored-by` trailer, and no author or committer that matches your local denylist. `bash bootstrap.sh`, run inside WSL2 and never on the Windows host, installs the reference guard from the `core` pin through `groundwork-commit-guard.py`, before it hands over to the shared engine. It does not run under `--prepare-only`.
+The contract is groundwork-core `docs/commit-identity.md` (v0.9.0): no `Co-authored-by` trailer, and no author or committer that matches your local denylist.
 
-## What it does
+## Ownership
 
-- **Scope is your own repositories.** Hooks live in `~/.config/groundwork/git-hooks`. `commit-identity-guard.sh` there is a symlink to the pinned `core/commit-guard/commit-identity-guard.sh`, so the pin is the only copy. `core.hooksPath` is never set globally. It lives in `~/.config/groundwork/commit-guard.gitconfig`, and `~/.config/git/config` includes that file through four `includeIf "hasconfig:remote.*.url:..."` entries: `https://github.com/<owner>/**`, `git@github.com:<owner>/**`, `ssh://git@github.com/<owner>/**` and `*:<owner>/**` (any SSH host alias). Each owner letter matches in either case, and the trailing `/` keeps a look-alike such as `<owner>2` out. Work repositories and hook tools such as pre-commit are untouched.
-- **Git 2.36 or newer.** Older git gets one warning and no activation.
-- **An existing `core.hooksPath` is respected.** If one is set anywhere, nothing is written and one line says so. Chain `commit-msg` and `pre-push` from your hooks directory to use the guard. Only an exact global path written by an earlier Groundwork install is removed.
-- **Per-repository hooks keep running.** Every documented hook name forwards to the repository's own `.git/hooks/<name>` after the guard. `pre-push` input is buffered and given to both.
-- **Claude Code attribution.** `attribution.commit` and `attribution.pr` become `""` in `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` honored) only where the key is absent. Other keys, the file mode and a symlink are kept, a numbered `settings.json.bak.N` is written first, and invalid JSON is left untouched.
-- **Denylist.** An empty `~/.config/groundwork/commit-denylist` is created when missing. This repository never supplies a value; names stay in that local file.
+The shared engine, `groundwork-mac`, installs the guard on every OS through `home/run_after_24-commit-identity-guard.sh.tmpl`. `bash bootstrap.sh` here hands over to that chezmoi apply, so this repository installs nothing of its own and carries no second copy. A second installer would fight the engine over the dispatcher and the guard symlink.
 
-## Opt out and check
+What the engine does, for reference:
 
-- `groundwork-commit-guard off` creates `~/.config/groundwork/commit-guard-off`. The hooks check it at run time and setup installs nothing while it exists. `groundwork-commit-guard on` removes it.
-- `GROUNDWORK_COMMIT_GUARD=off git ...` bypasses one command. A blocked commit prints both ways out.
-- `groundwork-commit-guard doctor` reports the scope, any global `core.hooksPath`, the opt-out, owned repositories that bypass the guard, and the guard's own `doctor` output. The command is copied to `~/.local/bin` and never replaces a file that is not Groundwork's.
-- A rerun that finds everything in place prints nothing and changes nothing. A failure warns and does not stop setup.
+- Hooks live in `~/.config/groundwork/git-hooks`, with the guard as a symlink to the pinned core script. `core.hooksPath` is never global. It is set in `~/.config/groundwork/commit-guard.gitconfig` and included from `~/.config/git/config` through `includeIf "hasconfig:remote.*.url:..."` entries for your own GitHub remotes only. Git older than 2.36 gets one warning and no activation, and an existing `core.hooksPath` is respected.
+- Claude Code `attribution.commit` and `attribution.pr` are set to empty only where unset, with a numbered backup. The denylist is created empty and never filled by Groundwork.
+- Opt out with `~/.config/groundwork/commit-guard-off` or `GROUNDWORK_COMMIT_GUARD=off` for one command. Check with `groundwork-doctor --commit-identity`.
 
-## Known gaps
-
-- Remote URLs with userinfo (`https://user@github.com/...`) are not matched.
-- A push straight to an owned URL from a repository with no owned remote is not guarded.
-- A commit made before an owned remote exists is caught at `pre-push` once one is added.
-- An owned repository with its own local `core.hooksPath` (husky, lefthook) bypasses the guard. `doctor` lists those under `~/code` (`GROUNDWORK_CODE_DIR` overrides).
-- If the pinned guard symlink does not resolve, a hook prints one warning instead of skipping silently.
-- Cursor attribution is a UI setting that `doctor` cannot read.
-- The shared engine may install the same guard through chezmoi once it adopts groundwork-core v0.9.0. Both write the same hook directory, so the one that runs last owns the dispatcher text and the guard symlink target.
+Change the install behaviour, scope patterns and known gaps in the engine, not here. This repository only needs an engine that includes it, so run `update-all` or `groundwork-update` after the engine adopts a new core pin.

@@ -69,7 +69,6 @@ class CorePinTest(unittest.TestCase):
     def test_host_contract_checks_out_submodules(self) -> None:
         workflow = (REPO / ".github/workflows/ci.yml").read_text()
         wrapper, host = workflow.split("host-contract:", 1)
-        # The wrapper job runs the commit guard tests, which need core/commit-guard.
-        self.assertIn("submodules: true", wrapper)
+        self.assertNotIn("submodules:", wrapper)
         self.assertIn("submodules: true", host)
         self.assertIn("runs-on: windows-latest", host)

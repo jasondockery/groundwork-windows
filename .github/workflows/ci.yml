@@ -16,10 +16,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          submodules: true
       - run: bash -n bootstrap.sh
       - run: bash -n install-git-filter-repo.sh
-      - run: python3 -B -m py_compile groundwork-commit-guard.py
       - run: python3 -B -m unittest discover -s tests -v
 
   host-contract:

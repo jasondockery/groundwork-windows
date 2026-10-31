@@ -1,6 +1,6 @@
 # git-filter-repo for history purges (opt-in)
 
-When a credential or private reference has to leave a repository's history, the procedure is the shared runbook, not this page: [groundwork-core `docs/history-purge.md`](https://github.com/jasondockery/groundwork-core/blob/v0.9.0/docs/history-purge.md). Read it before any rewrite. This page records only the WSL2 install: what this repo installs, when, and how you remove it.
+When a credential or private reference has to leave a repository's history, the procedure is the shared runbook, not this page: [groundwork-core `docs/history-purge.md`](https://github.com/jasondockery/groundwork-core/blob/v0.8.1/docs/history-purge.md). Read it before any rewrite. This page records only the WSL2 install: what this repo installs, when, and how you remove it.
 
 `git-filter-repo` is not a default. A normal `bash bootstrap.sh` does not install it. Setup never runs a history rewrite, a force-push, or a tag change.
 
